@@ -1,0 +1,14 @@
+services:
+  jira-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: personal-jira-mcp:local
+    env_file:
+      - .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8787
+    ports:
+      - "127.0.0.1:${PORT:-8787}:8787"
+    restart: unless-stopped

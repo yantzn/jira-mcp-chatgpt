@@ -1,6 +1,6 @@
 # Personal Jira MCP
 
-Jira Cloud REST API v3をMCPツールとして公開する、個人利用向けのTypeScriptサーバーです。
+Jira Cloud REST API v3をMCPツールとして公開する、個人利用向けのDocker専用サーバーです。ホスト側へNode.jsやnpmをインストールする必要はありません。
 
 ## 提供ツール
 
@@ -14,12 +14,16 @@ Jira Cloud REST API v3をMCPツールとして公開する、個人利用向け�
 
 読み取りツールと書き込みツールはMCP annotationで区別しています。説明とコメントはJira REST API v3が要求するADFへ変換します。
 
+## 前提
+
+- Docker DesktopまたはDocker Engine
+- Docker Compose v2
+- Jira CloudのAPIトークン
+
 ## セットアップ
 
-前提はNode.js 20以降です。
-
 ```powershell
-npm install
+cd C:\work\jira-mcp
 Copy-Item .env.example .env
 ```
 
@@ -30,52 +34,63 @@ JIRA_BASE_URL=https://your-domain.atlassian.net
 JIRA_EMAIL=your-email@example.com
 JIRA_API_TOKEN=your-api-token
 JIRA_DEFAULT_PROJECT_KEY=PROJECT
-HOST=127.0.0.1
+HOST=0.0.0.0
 PORT=8787
-MCP_ACCESS_TOKEN=
+MCP_ACCESS_TOKEN=十分に長いランダム文字列
 ```
 
 APIトークンはAtlassianアカウントのセキュリティ設定から作成してください。`.env`はGit管理対象外です。
 
-## 起動と確認
+PowerShellでMCP用トークンを生成する例:
 
 ```powershell
-npm run dev
+[Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)).ToLower()
 ```
 
-MCP endpointは `http://127.0.0.1:8787/mcp`、health checkは `http://127.0.0.1:8787/` です。
-
-MCP Inspectorで確認できます。
+## 起動
 
 ```powershell
-npx @modelcontextprotocol/inspector@latest
+docker compose up --build -d
 ```
 
-## テスト
+状態とログを確認します。
 
 ```powershell
-npm run typecheck
-npm test
-npm run build
+docker compose ps
+docker compose logs -f jira-mcp
 ```
 
-## Docker
+接続先:
+
+- Health check: `http://localhost:8787/`
+- MCP endpoint: `http://localhost:8787/mcp`
+- MCP認証: `Authorization: Bearer <MCP_ACCESS_TOKEN>`
+
+## 停止
 
 ```powershell
-docker build -t personal-jira-mcp .
-docker run --rm --env-file .env -p 8787:8787 personal-jira-mcp
+docker compose down
 ```
 
-Docker利用時は `.env` の `HOST=0.0.0.0` と、十分に長い `MCP_ACCESS_TOKEN` を設定してください。
+## 更新
+
+```powershell
+docker compose build --no-cache
+docker compose up -d
+```
+
+Dockerイメージのビルド中に型検査、単体テスト、TypeScriptビルドが自動実行されます。いずれかが失敗するとイメージは作成されません。
 
 ## セキュリティ上の注意
 
-- Jira APIトークンやメールアドレスをソースコードへ記載しないでください。
-- `HOST=0.0.0.0` などで外部公開する場合、サーバーは `MCP_ACCESS_TOKEN` が未設定だと起動を拒否します。
+- Jira APIトークン、メールアドレス、`MCP_ACCESS_TOKEN`をソースコードへ記載しないでください。
+- `.env`をGitへ追加しないでください。
+- サーバーはコンテナ内で外部向けアドレスを使うため、`MCP_ACCESS_TOKEN`が未設定だと起動を拒否します。
+- Composeのポートはホストの `127.0.0.1` のみに公開され、初期状態では同一PC以外から接続できません。
 - この個人利用版のBearer保護は、ChatGPTの正式なOAuth接続を代替するものではありません。
 - ChatGPTへ直接公開する段階では、MCP OAuth 2.1対応とJira OAuth 2.0（3LO）への移行を推奨します。
-- 書き込み操作はChatGPT側でも内容を確認してから承認してください。
+- 書き込み操作は内容を確認してから承認してください。
 
 ## ChatGPT接続について
 
-ChatGPTから接続するには、HTTPSで到達できる `/mcp` URLが必要です。ただし、Jira APIトークンを保持した無認証サーバーをインターネットへ公開してはいけません。本リポジトリはまずローカルMCPクライアントとInspectorで動作確認し、ChatGPT公開前にOAuth対応を追加する前提です。
+ChatGPTから接続するには、HTTPSで到達できる `/mcp` URLと、ChatGPTが利用できる認証方式が必要です。現在のDocker構成は同一PC上での安全な動作確認用です。ChatGPT公開前にOAuth対応とHTTPS公開構成を追加してください。
