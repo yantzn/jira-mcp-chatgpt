@@ -1,6 +1,14 @@
 # Personal Jira MCP
 
-Jira Cloud REST API v3をMCPツールとして公開する、個人利用向けのDocker専用サーバーです。ホスト側へNode.jsやnpmをインストールする必要はありません。
+Jira Cloud REST API v3をMCPツールとして公開する個人利用向けサーバーです。Docker ComposeでJira MCPとOpenAI Secure MCP Tunnelを起動し、ChatGPTからはトンネル経由、Gemini CLIからはローカルHTTP経由で利用します。
+
+```text
+ChatGPT ─ OpenAI Secure MCP Tunnel ─ tunnel-client ─ Jira MCP ─ Jira Cloud
+                                               ↑
+Gemini CLI ─ http://127.0.0.1:8787/mcp ────────┘
+```
+
+Jira MCPはインターネットへ公開しません。ホスト側のMCPポートは既定で`127.0.0.1`だけに公開します。
 
 ## 提供ツール
 
@@ -12,19 +20,36 @@ Jira Cloud REST API v3をMCPツールとして公開する、個人利用向け�
 - `update_issue`: 課題更新
 - `add_comment`: コメント追加
 
-読み取りツールと書き込みツールはMCP annotationで区別しています。説明とコメントはJira REST API v3が要求するADFへ変換します。
-
 ## 前提
 
 - Docker DesktopまたはDocker Engine
 - Docker Compose v2
 - Jira CloudのAPIトークン
+- OpenAI PlatformのTunnel ID
+- Tunnel用Runtime API key
+- ChatGPTでカスタムMCPアプリを追加できる権限
+- Gemini CLI（Geminiから利用する場合）
 
-## セットアップ
+## 1. OpenAI Secure MCP Tunnelを作成
+
+OpenAI PlatformのTunnel設定で次を行います。
+
+1. 個人用Platform Organizationを選択します。
+2. MCP Tunnelを作成します。
+3. 使用するChatGPT workspaceを関連付けます。
+4. `tunnel_id`を控えます。
+5. Tunnel用Runtime API keyを発行します。
+
+通常のOpenAI API keyとTunnel用Runtime API keyを混同しないでください。Tunnel実行にはTunnels Read + Use、Tunnel作成にはTunnels Read + Manage権限が必要です。
+
+公式手順: https://developers.openai.com/api/docs/guides/secure-mcp-tunnels
+
+## 2. 設定ファイルを作成
 
 ```powershell
 cd C:\work\jira-mcp
 Copy-Item .env.example .env
+Copy-Item .secrets.example .secrets -Recurse
 ```
 
 `.env`を編集します。
@@ -32,65 +57,157 @@ Copy-Item .env.example .env
 ```dotenv
 JIRA_BASE_URL=https://your-domain.atlassian.net
 JIRA_EMAIL=your-email@example.com
-JIRA_API_TOKEN=your-api-token
 JIRA_DEFAULT_PROJECT_KEY=PROJECT
 HOST=0.0.0.0
 PORT=8787
-MCP_ACCESS_TOKEN=十分に長いランダム文字列
+MCP_BIND_ADDRESS=127.0.0.1
+CONTROL_PLANE_TUNNEL_ID=tunnel_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
-APIトークンはAtlassianアカウントのセキュリティ設定から作成してください。`.env`はGit管理対象外です。
+`.secrets/jira-api-token`にはJira APIトークンだけを記載します。
 
-PowerShellでMCP用トークンを生成する例:
+```text
+your-jira-api-token
+```
+
+`.secrets/control-plane-api-key`にはOpenAI Tunnel用Runtime API keyだけを記載します。
+
+```text
+sk-your-runtime-api-key
+```
+
+`.secrets/mcp-authorization-header`には`Bearer `を含む完全な認証ヘッダー値を記載します。
+
+```text
+Bearer 十分に長いランダム文字列
+```
+
+PowerShellでランダム文字列を生成する例:
 
 ```powershell
 [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)).ToLower()
 ```
 
-## 起動
+`.env`と`.secrets/`はGit管理対象外です。
+
+## 3. Docker Composeで起動
 
 ```powershell
 docker compose up --build -d
+docker compose ps
 ```
 
-状態とログを確認します。
+両方のサービスがhealthyになることを確認します。
 
 ```powershell
-docker compose ps
-docker compose logs -f jira-mcp
+docker compose logs -f jira-mcp tunnel-client
 ```
 
-接続先:
+主な接続経路:
 
-- Health check: `http://localhost:8787/`
-- MCP endpoint: `http://localhost:8787/mcp`
-- MCP認証: `Authorization: Bearer <MCP_ACCESS_TOKEN>`
+- Jira MCP内部URL: `http://jira-mcp:8787/mcp`
+- Gemini CLI用URL: `http://127.0.0.1:8787/mcp`
+- Tunnelの管理画面は外部公開しません
 
-## 停止
+Jira MCPと` tunnel-client`は内部Dockerネットワークで通信します。` tunnel-client`だけがOpenAI APIへの外向きHTTPS通信を持ちます。
+
+## 4. ChatGPTへ接続
+
+1. ChatGPTのPluginsを開きます。
+2. `Add custom MCP server`を選択します。
+3. Connectionで`Tunnel`を選択します。
+4. `.env`に設定したTunnelを選択します。
+5. 認証方式はTunnelの設定に合わせます。この構成ではJira MCPの固定Bearerは` tunnel-client`が内部で付与します。
+6. リスク警告を確認して作成・インストールします。
+7. Workチャットで`@Jira`を選択します。
+
+使用例:
+
+```text
+@Jira PROJプロジェクトの未完了課題を一覧表示してください。
+```
+
+```text
+@Jira 次の内容でBugを作成してください。
+要約: ログイン画面でAPIエラーが表示されない
+説明: 500応答時にユーザー向けメッセージを表示する
+優先度: High
+```
+
+## 5. Gemini CLIへ接続
+
+認証ヘッダーを秘密ファイルから読み込み、Gemini CLIへ登録します。
+
+```powershell
+$jiraMcpAuth = (Get-Content -Raw .secrets\mcp-authorization-header).Trim()
+gemini mcp add `
+  --scope user `
+  --transport http `
+  --header "Authorization: $jiraMcpAuth" `
+  --description "個人用Jira Cloud連携" `
+  jira `
+  http://127.0.0.1:8787/mcp
+Remove-Variable jiraMcpAuth
+```
+
+登録を確認します。
+
+```powershell
+gemini mcp list
+```
+
+Gemini CLIでの使用例:
+
+```text
+JiraのPROJプロジェクトから、自分が担当する未完了課題を検索してください。
+```
+
+書き込み確認を維持するため、`--trust`は指定しないことを推奨します。
+
+## 停止・再起動
 
 ```powershell
 docker compose down
+docker compose up -d
 ```
+
+`tunnel-client`が停止している間、ChatGPTからはJira MCPを利用できません。Gemini CLIは`jira-mcp`コンテナが起動していれば利用できます。
 
 ## 更新
 
 ```powershell
-docker compose build --no-cache
+docker compose pull tunnel-client
+docker compose build --no-cache jira-mcp
 docker compose up -d
 ```
 
-Dockerイメージのビルド中に型検査、単体テスト、TypeScriptビルドが自動実行されます。いずれかが失敗するとイメージは作成されません。
+`tunnel-client`は安全性と再現性のため、`compose.yaml`で公式イメージの特定バージョンへ固定しています。更新時はOpenAI公式リリースを確認してタグを変更してください。
 
-## セキュリティ上の注意
+## セキュリティ
 
-- Jira APIトークン、メールアドレス、`MCP_ACCESS_TOKEN`をソースコードへ記載しないでください。
-- `.env`をGitへ追加しないでください。
-- サーバーはコンテナ内で外部向けアドレスを使うため、`MCP_ACCESS_TOKEN`が未設定だと起動を拒否します。
-- Composeのポートはホストの `127.0.0.1` のみに公開され、初期状態では同一PC以外から接続できません。
-- この個人利用版のBearer保護は、ChatGPTの正式なOAuth接続を代替するものではありません。
-- ChatGPTへ直接公開する段階では、MCP OAuth 2.1対応とJira OAuth 2.0（3LO）への移行を推奨します。
-- 書き込み操作は内容を確認してから承認してください。
+- Jira APIトークン、Runtime API key、MCP認証ヘッダーをコミットしないでください。
+- MCPポートは`127.0.0.1`のみに公開してください。
+- `MCP_BIND_ADDRESS=0.0.0.0`へ変更しないでください。
+- 自宅LAN内の別PCから利用する場合も、ファイアウォールと接続元IP制限を追加してください。
+- Tunnel用Runtime API keyには必要最小限のTunnels Read + Use権限だけを付与してください。
+- 書き込みツールの承認を無効化しないでください。
+- `.secrets/mcp-authorization-header`の値を定期的にローテーションしてください。
+- `docker compose config`は環境変数を展開する場合があります。出力を共有しないでください。
 
-## ChatGPT接続について
+## トラブルシューティング
 
-ChatGPTから接続するには、HTTPSで到達できる `/mcp` URLと、ChatGPTが利用できる認証方式が必要です。現在のDocker構成は同一PC上での安全な動作確認用です。ChatGPT公開前にOAuth対応とHTTPS公開構成を追加してください。
+```powershell
+docker compose ps
+docker compose logs --tail 200 jira-mcp
+docker compose logs --tail 200 tunnel-client
+```
+
+確認ポイント:
+
+- `jira-mcp`がhealthyか
+- `tunnel-client`がhealthyか
+- Tunnel IDが正しいか
+- Runtime API keyにTunnels Read + Useがあるか
+- TunnelとChatGPT workspaceが関連付いているか
+- PCから`api.openai.com:443`へ接続できるか
+- `.secrets/mcp-authorization-header`が`Bearer `で始まっているか

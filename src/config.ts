@@ -1,9 +1,22 @@
 import "dotenv/config";
+import { readFileSync } from "node:fs";
 
 const required = (name: string): string => {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`${name} が設定されていません`);
   return value;
+};
+
+const readSecret = (fileName: string, label: string): string => {
+  const value = readFileSync(fileName, "utf8").trim();
+  if (!value) throw new Error(`${label}のファイルが空です`);
+  return value;
+};
+
+const requiredSecret = (valueName: string, fileName: string): string => {
+  const file = process.env[fileName]?.trim();
+  if (file) return readSecret(file, valueName);
+  return required(valueName);
 };
 
 const normalizeBaseUrl = (value: string): string => {
@@ -21,7 +34,16 @@ export type AppConfig = {
   defaultProjectKey?: string;
   host: string;
   port: number;
-  mcpAccessToken?: string;
+  mcpAuthorizationHeader?: string;
+};
+
+const loadAuthorizationHeader = (): string | undefined => {
+  const file = process.env.MCP_AUTHORIZATION_HEADER_FILE?.trim();
+  if (file) {
+    return readSecret(file, "MCP認証ヘッダー");
+  }
+  const token = process.env.MCP_ACCESS_TOKEN?.trim();
+  return token ? `Bearer ${token}` : undefined;
 };
 
 export function loadConfig(): AppConfig {
@@ -32,10 +54,10 @@ export function loadConfig(): AppConfig {
   return {
     jiraBaseUrl: normalizeBaseUrl(required("JIRA_BASE_URL")),
     jiraEmail: required("JIRA_EMAIL"),
-    jiraApiToken: required("JIRA_API_TOKEN"),
+    jiraApiToken: requiredSecret("JIRA_API_TOKEN", "JIRA_API_TOKEN_FILE"),
     defaultProjectKey: process.env.JIRA_DEFAULT_PROJECT_KEY?.trim() || undefined,
     host: process.env.HOST?.trim() || "127.0.0.1",
     port,
-    mcpAccessToken: process.env.MCP_ACCESS_TOKEN?.trim() || undefined,
+    mcpAuthorizationHeader: loadAuthorizationHeader(),
   };
 }

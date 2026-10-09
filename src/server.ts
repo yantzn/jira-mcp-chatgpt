@@ -6,8 +6,8 @@ import { createJiraMcpServer } from "./mcp-server.js";
 
 const config = loadConfig();
 
-if (config.host !== "127.0.0.1" && config.host !== "localhost" && !config.mcpAccessToken) {
-  throw new Error("外部公開時はMCP_ACCESS_TOKENの設定が必要です");
+if (config.host !== "127.0.0.1" && config.host !== "localhost" && !config.mcpAuthorizationHeader) {
+  throw new Error("外部向けアドレスで起動する場合はMCP認証ヘッダーの設定が必要です");
 }
 
 const unauthorized = (res: ServerResponse) => {
@@ -16,8 +16,8 @@ const unauthorized = (res: ServerResponse) => {
 };
 
 const isAuthorized = (req: IncomingMessage): boolean => {
-  if (!config.mcpAccessToken) return true;
-  return req.headers.authorization === `Bearer ${config.mcpAccessToken}`;
+  if (!config.mcpAuthorizationHeader) return true;
+  return req.headers.authorization === config.mcpAuthorizationHeader;
 };
 
 const httpServer = createServer(async (req, res) => {

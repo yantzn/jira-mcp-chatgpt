@@ -1,6 +1,8 @@
 node_modules
 dist
 .env
+.secrets
+.secrets.example
 .git
 coverage
 *.log
