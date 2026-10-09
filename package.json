@@ -1,6 +1,6 @@
 {
-  "name": "personal-jira-mcp",
-  "version": "0.1.0",
+  "name": "personal-atlassian-mcp",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {

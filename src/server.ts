@@ -1,8 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { loadConfig } from "./config.js";
+import { ConfluenceClient } from "./confluence-client.js";
 import { JiraClient } from "./jira-client.js";
-import { createJiraMcpServer } from "./mcp-server.js";
+import { createAtlassianMcpServer } from "./mcp-server.js";
 
 const config = loadConfig();
 
@@ -23,7 +24,7 @@ const isAuthorized = (req: IncomingMessage): boolean => {
 const httpServer = createServer(async (req, res) => {
   if (req.url === "/" && req.method === "GET") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", service: "personal-jira-mcp" }));
+    res.end(JSON.stringify({ status: "ok", service: "personal-atlassian-mcp" }));
     return;
   }
   if (req.url !== "/mcp") {
@@ -39,7 +40,10 @@ const httpServer = createServer(async (req, res) => {
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
   });
-  const mcpServer = createJiraMcpServer(new JiraClient(config));
+  const mcpServer = createAtlassianMcpServer(
+    new JiraClient(config),
+    new ConfluenceClient(config),
+  );
   res.on("close", () => {
     void transport.close();
     void mcpServer.close();
@@ -56,5 +60,5 @@ const httpServer = createServer(async (req, res) => {
 });
 
 httpServer.listen(config.port, config.host, () => {
-  console.log(`Jira MCP server: http://${config.host}:${config.port}/mcp`);
+  console.log(`Atlassian MCP server: http://${config.host}:${config.port}/mcp`);
 });
